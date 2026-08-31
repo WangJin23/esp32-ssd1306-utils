@@ -7,6 +7,7 @@
 ## 安装
 
 这里以PlatformIO为例，把库直接放入lib文件夹即可
+```text
 your_project/
 ├── lib/
 │   └── ssd1306_utils/
@@ -15,6 +16,7 @@ your_project/
 ├── src/
 │   └── main.cpp
 └── platformio.ini
+```
 
 ---
 
