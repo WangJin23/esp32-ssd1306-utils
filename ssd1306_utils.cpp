@@ -1,3 +1,4 @@
+//esp32-ssd1306-utils v1.0.1
 #include "ssd1306_utils.h"
 #include <WiFi.h>
 #include <vector>
@@ -5,16 +6,17 @@
 #include <string.h>
 
 // ---- 屏幕对象（使用你的引脚） ----
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 21, 22);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, SCLK_PIN, SDA_PIN);
 
-// ---- 字符集定义 ----
+// ---- 字符集定义（新增 Unicode 页） ----
 const char* charset[] = {
   "abcdefghijklmnopqrstuvwxyz",
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
   "0123456789!@#$%?&*()-_=+[]",
-  "<>,.|\\/{}`~"
+  "<>,.|\\/{}`~",
+  "0123456789ABCDEF"   // Unicode 输入页
 };
-const char* charsetName[] = { "小写", "大写", "符号", "符号" };
+const char* charsetName[] = { "小写", "大写", "符号", "符号", "Unicode" };
 const int charsetCount = sizeof(charset) / sizeof(charset[0]);
 int charsetLen[charsetCount];  // 运行时计算长度
 
@@ -22,11 +24,65 @@ int charsetLen[charsetCount];  // 运行时计算长度
 int currentSet = 0;
 int highlightIndex = 0;
 String inputBuffer = "";
+String unicodeBuffer = "";   // 存放当前输入的十六进制码点（最多4位）
 
 bool hashLongPress = false;
 bool starLongPress = false;
 unsigned long hashPressStart = 0;
 unsigned long starPressStart = 0;
+
+void ssd1306UtilsInit() {
+  u8g2.begin();
+  u8g2.enableUTF8Print();
+  pinMode(KEY_UP, INPUT_PULLUP);
+  pinMode(KEY_DOWN, INPUT_PULLUP);
+  pinMode(KEY_HASH, INPUT_PULLUP);
+  pinMode(KEY_STAR, INPUT_PULLUP);
+}
+// ---- Unicode 码点转 UTF-8 字符串 ----
+String unicodeToUTF8(uint32_t codePoint) {
+  String result = "";
+  if (codePoint <= 0x7F) {
+    // 1 字节: 0xxxxxxx
+    result += (char)codePoint;
+  } else if (codePoint <= 0x7FF) {
+    // 2 字节: 110xxxxx 10xxxxxx
+    result += (char)(0xC0 | ((codePoint >> 6) & 0x1F));
+    result += (char)(0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0xFFFF) {
+    // 3 字节: 1110xxxx 10xxxxxx 10xxxxxx
+    result += (char)(0xE0 | ((codePoint >> 12) & 0x0F));
+    result += (char)(0x80 | ((codePoint >> 6) & 0x3F));
+    result += (char)(0x80 | (codePoint & 0x3F));
+  }
+  return result;
+}
+// ---- 删除字符串末尾一个完整的 UTF-8 字符 ----
+// ---- 删除字符串末尾一个完整的 UTF-8 字符（如果可能） ----
+static void removeLastUTF8Char(String &str) {
+    if (str.length() == 0) return;
+    int len = str.length();
+    int pos = len - 1;
+    // 如果最后一个字节是 ASCII（<0x80）或 UTF-8 起始字节（>=0xC0），则直接删除它
+    // 否则它是连续字节（0x80-0xBF），需要向前找到起始字节
+    while (pos > 0 && ((unsigned char)str[pos] & 0xC0) == 0x80) {
+        pos--;
+    }
+    // 现在 pos 指向起始字节（或 ASCII），删除从 pos 到末尾的所有内容
+    str.remove(pos);
+}
+// ---- 获取字符串末尾 UTF-8 字符的字节数 ----
+static int getLastCharByteLen(const String &str) {
+    if (str.length() == 0) return 0;
+    unsigned char last = str[str.length() - 1];
+    if (last >= 0xE0 && last <= 0xEF) return 3;      // 中文 3 字节
+    if (last >= 0xC0 && last <= 0xDF) return 2;      // 少数 2 字节字符
+    return 1;                                         // ASCII 或单字节
+}
+// ---- 判断是否为 Unicode 页 ----
+static bool isUnicodePage() {
+    return currentSet == (charsetCount - 1);
+}
 
 // ---- 绘制界面（内部函数） ----
 static void drawInputUI() {
@@ -34,72 +90,155 @@ static void drawInputUI() {
   u8g2.setFont(u8g2_font_wqy12_t_gb2312b);
   u8g2.enableUTF8Print();
 
-  // 输入框
+  // ---- 输入框（顶部） ----
   u8g2.setCursor(0, 12);
-  u8g2.print("> ");
-  u8g2.print(inputBuffer);
-  int cursorX = u8g2.getStrWidth(("> " + inputBuffer).c_str());
+  
+  if (isUnicodePage() && unicodeBuffer.length() > 0) {
+    // Unicode 模式：显示 U+ 和码点，以及预览字符
+    u8g2.print("U+");
+    u8g2.print(unicodeBuffer);
+    
+    // 预览当前码点对应的字符（如果有效）
+    if (unicodeBuffer.length() == 4) {
+      long codePoint = strtol(unicodeBuffer.c_str(), NULL, 16);
+      if (codePoint > 0 && codePoint <= 0xFFFF) {
+        u8g2.print(" → ");
+        u8g2.print(unicodeToUTF8(codePoint));
+      }
+    }
+  } else {
+    // 普通模式：显示已输入内容
+    u8g2.print("> ");
+    u8g2.print(inputBuffer);
+  }
+  
+  // ---- 光标（下划线）：直接放在当前光标位置 ----
+  int cursorX = u8g2.getCursorX();   // 获取当前文字末尾的 X 坐标
   u8g2.drawLine(cursorX, 14, cursorX + 2, 14);
 
-  // 分隔线
+  // ---- 分隔线 ----
   u8g2.drawHLine(0, 16, 128);
 
-  // 字符键盘（两行）
+  // ---- 字符键盘 ----
   const char* currentChars = charset[currentSet];
   int len = charsetLen[currentSet];
-  int half = (len + 1) / 2;
-  int spacing = 10;
-  int xStart = (128 - (half > 13 ? 13 : half) * spacing) / 2;
-  if (xStart < 0) xStart = 0;
-
-  int y1 = 26;
-  for (int i = 0; i < half && i < len; i++) {
-    int x = xStart + i * spacing;
-    char ch = currentChars[i];
-    if (i == highlightIndex) {
-      u8g2.setDrawColor(1);
-      u8g2.drawBox(x-1, y1-10, 10, 14);
-      u8g2.setDrawColor(0);
-      u8g2.setCursor(x, y1);
-      u8g2.print(ch);
-      u8g2.setDrawColor(1);
-    } else {
-      u8g2.setCursor(x, y1);
-      u8g2.print(ch);
+  
+  if (isUnicodePage()) {
+    // Unicode 页特殊布局：三行十六进制键盘
+    // 第一行: 0 1 2 3 4 5 6 7
+    // 第二行: 8 9 A B C D E F
+    // 第三行: U+ 显示 + 功能提示
+    int spacing = 14;
+    int xStart = (128 - 8 * spacing) / 2;
+    if (xStart < 0) xStart = 0;
+    
+    // 第一行: 0-7
+    int y1 = 26;
+    for (int i = 0; i < 8; i++) {
+      int x = xStart + i * spacing;
+      char ch = currentChars[i];
+      if (i == highlightIndex) {
+        u8g2.setDrawColor(1);
+        u8g2.drawBox(x-1, y1-10, 12, 14);
+        u8g2.setDrawColor(0);
+        u8g2.setCursor(x, y1);
+        u8g2.print(ch);
+        u8g2.setDrawColor(1);
+      } else {
+        u8g2.setCursor(x, y1);
+        u8g2.print(ch);
+      }
     }
-  }
-
-  int y2 = 40;
-  for (int i = half; i < len; i++) {
-    int idx = i - half;
-    int x = xStart + idx * spacing;
-    char ch = currentChars[i];
-    if (i == highlightIndex) {
-      u8g2.setDrawColor(1);
-      u8g2.drawBox(x-1, y2-10, 10, 14);
-      u8g2.setDrawColor(0);
-      u8g2.setCursor(x, y2);
-      u8g2.print(ch);
-      u8g2.setDrawColor(1);
-    } else {
-      u8g2.setCursor(x, y2);
-      u8g2.print(ch);
+    
+    // 第二行: 8-F
+    int y2 = 40;
+    for (int i = 8; i < 16; i++) {
+      int idx = i - 8;
+      int x = xStart + idx * spacing;
+      char ch = currentChars[i];
+      if (i == highlightIndex) {
+        u8g2.setDrawColor(1);
+        u8g2.drawBox(x-1, y2-10, 12, 14);
+        u8g2.setDrawColor(0);
+        u8g2.setCursor(x, y2);
+        u8g2.print(ch);
+        u8g2.setDrawColor(1);
+      } else {
+        u8g2.setCursor(x, y2);
+        u8g2.print(ch);
+      }
     }
-  }
+    
+    // 底部提示
+    u8g2.setCursor(2, 58);
+    u8g2.print("U+");
+    u8g2.print(unicodeBuffer);
+    if (unicodeBuffer.length() == 4) {
+      long codePoint = strtol(unicodeBuffer.c_str(), NULL, 16);
+      if (codePoint > 0 && codePoint <= 0xFFFF) {
+        u8g2.print(" → ");
+        u8g2.print((char)codePoint);
+      }
+    }
+    u8g2.setCursor(50, 58);
+    u8g2.print("#输/切 *删/确");
+    
+  } else {
+    // 普通页布局（原样）
+    int half = (len + 1) / 2;
+    int spacing = 10;
+    int xStart = (128 - (half > 13 ? 13 : half) * spacing) / 2;
+    if (xStart < 0) xStart = 0;
 
-  // 底部提示
-  u8g2.setCursor(2, 58);
-  u8g2.print(charsetName[currentSet]);
-  u8g2.setCursor(34, 58);
-  u8g2.print("#输/切 *删/确");
+    int y1 = 26;
+    for (int i = 0; i < half && i < len; i++) {
+      int x = xStart + i * spacing;
+      char ch = currentChars[i];
+      if (i == highlightIndex) {
+        u8g2.setDrawColor(1);
+        u8g2.drawBox(x-1, y1-10, 10, 14);
+        u8g2.setDrawColor(0);
+        u8g2.setCursor(x, y1);
+        u8g2.print(ch);
+        u8g2.setDrawColor(1);
+      } else {
+        u8g2.setCursor(x, y1);
+        u8g2.print(ch);
+      }
+    }
+
+    int y2 = 40;
+    for (int i = half; i < len; i++) {
+      int idx = i - half;
+      int x = xStart + idx * spacing;
+      char ch = currentChars[i];
+      if (i == highlightIndex) {
+        u8g2.setDrawColor(1);
+        u8g2.drawBox(x-1, y2-10, 10, 14);
+        u8g2.setDrawColor(0);
+        u8g2.setCursor(x, y2);
+        u8g2.print(ch);
+        u8g2.setDrawColor(1);
+      } else {
+        u8g2.setCursor(x, y2);
+        u8g2.print(ch);
+      }
+    }
+
+    // 底部提示（普通页）
+    u8g2.setCursor(2, 58);
+    u8g2.print(charsetName[currentSet]);
+    u8g2.setCursor(34, 58);
+    u8g2.print("#输/切 *删/确");
+  }
 
   u8g2.sendBuffer();
 }
-
 // ---- 公开函数：阻塞式输入法 ----
 String getInputFromUser() {
   // 重置状态
   inputBuffer = "";
+  unicodeBuffer = "";
   highlightIndex = 0;
   currentSet = 0;
   hashLongPress = false;
@@ -133,27 +272,57 @@ String getInputFromUser() {
       highlightIndex = (highlightIndex + 1) % charsetLen[currentSet];
     }
 
-    // # 键：短按输入，长按切换字符集
+    // # 键
     if (hash == LOW && lastHash == HIGH) {
       hashPressStart = millis();
       hashLongPress = false;
     }
     if (hash == LOW && !hashLongPress) {
       if (millis() - hashPressStart > 500) {
-        currentSet = (currentSet + 1) % charsetCount;
-        highlightIndex = 0;
+        // 长按 #：切换字符集
+        // 如果在 Unicode 页且码点未满4位，禁止切换
+        if (isUnicodePage() && unicodeBuffer.length() > 0 && unicodeBuffer.length() < 4) {
+          // 禁止切换，忽略操作
+        } else {
+          currentSet = (currentSet + 1) % charsetCount;
+          highlightIndex = 0;
+          // 离开 Unicode 页时清空 unicodeBuffer
+          if (!isUnicodePage()) {
+            unicodeBuffer = "";
+          }
+        }
         hashLongPress = true;
       }
     }
     if (hash == HIGH && lastHash == LOW) {
       if (!hashLongPress) {
-        const char* chars = charset[currentSet];
-        inputBuffer += chars[highlightIndex];
+        // 短按 #：输入当前字符
+        if (isUnicodePage()) {
+          // Unicode 页：输入十六进制字符
+          const char* chars = charset[currentSet];
+          char ch = chars[highlightIndex];
+          // 限制最多4位
+          if (unicodeBuffer.length() < 4) {
+            unicodeBuffer += ch;
+            // 当输入满4位时，自动转换成字符并加入 inputBuffer
+            if (unicodeBuffer.length() == 4) {
+              long codePoint = strtol(unicodeBuffer.c_str(), NULL, 16);
+              if (codePoint > 0 && codePoint <= 0xFFFF) {
+                inputBuffer += unicodeToUTF8(codePoint);  // ✅ 正确
+              }
+              unicodeBuffer = "";
+            }
+          }
+        } else {
+          // 普通页：输入字符
+          const char* chars = charset[currentSet];
+          inputBuffer += chars[highlightIndex];
+        }
       }
       hashLongPress = false;
     }
 
-    // * 键：短按删除，长按确认（不再有双击取消）
+    // * 键：短按删除，长按确认
     if (star == LOW && lastStar == HIGH) {
       starPressStart = millis();
       starLongPress = false;
@@ -162,18 +331,31 @@ String getInputFromUser() {
     if (star == LOW && !starLongPress) {
       if (millis() - starPressStart > 800) {
         // 长按确认，返回当前输入（可能为空）
-        String result = inputBuffer;
-        inputBuffer = "";
-        u8g2.clearDisplay();
-        return result;
+        // 如果在 Unicode 页且码点未满4位，禁止确认
+        if (isUnicodePage() && unicodeBuffer.length() > 0 && unicodeBuffer.length() < 4) {
+          // 禁止确认，忽略操作
+        } else {
+          String result = inputBuffer;
+          inputBuffer = "";
+          unicodeBuffer = "";
+          u8g2.clearDisplay();
+          return result;
+        }
       }
     }
 
     if (star == HIGH && lastStar == LOW) {
       if (!starLongPress) {
-        // 短按删除一个字符
-        if (inputBuffer.length() > 0) {
-          inputBuffer.remove(inputBuffer.length() - 1);
+        // 短按删除
+        if (isUnicodePage()) {
+          // Unicode 页：优先删 unicodeBuffer，否则删 inputBuffer 末尾字符
+          if (unicodeBuffer.length() > 0) {
+            unicodeBuffer.remove(unicodeBuffer.length() - 1);
+          } else {
+            removeLastUTF8Char(inputBuffer);
+          }
+        } else {
+          removeLastUTF8Char(inputBuffer);
         }
       }
       starLongPress = false;
@@ -192,6 +374,7 @@ String getInputFromUser() {
   }
 }
 
+// ---- 以下为 WiFi 相关代码（保持不变） ----
 struct Network {
   String ssid;
   uint8_t encryptionType;
@@ -226,7 +409,6 @@ static void drawWifiList() {
   for (int i = displayStart; i < end; i++) {
     int y = 28 + (i - displayStart) * 10;
     String label = networks[i].ssid;
-    if (networks[i].encryptionType != WIFI_AUTH_OPEN) label += " 🔒";
     if (i == selectedIndex) {
       u8g2.setDrawColor(1);
       u8g2.drawBox(0, y-8, 128, 10);
@@ -243,8 +425,8 @@ static void drawWifiList() {
 }
 
 static void scanWiFi() {
-  WiFi.mode(WIFI_STA);        // 重置为STA模式，确保扫描正常
-  delay(100);                 // 等待模式切换
+  WiFi.mode(WIFI_STA);
+  delay(100);
 
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312b);
@@ -324,18 +506,13 @@ WiFiConfigResult startWiFiConfig() {
   static bool lastStar = HIGH;
 
   while (true) {
-    // 如果已连接，记录结果并返回
     if (WiFi.status() == WL_CONNECTED) {
       result.ssid = WiFi.SSID();
-      // 注意：WiFi.psk() 在某些 ESP32 版本可能不可用，改用用户输入的密码（见下方）
-      // 所以我们在连接成功时直接记录 password，而不是从 WiFi 读取
-      // 为安全起见，如果 WiFi.psk() 可用则使用，否则使用记录值
       #ifdef ESP32
-        result.password = WiFi.psk();  // 部分版本支持
+        result.password = WiFi.psk();
       #else
-        result.password = "";  // 由调用者保存
+        result.password = "";
       #endif
-      // 显示成功信息
       u8g2.clearBuffer();
       u8g2.setFont(u8g2_font_wqy12_t_gb2312b);
       u8g2.enableUTF8Print();
@@ -409,7 +586,7 @@ WiFiConfigResult startWiFiConfig() {
         bool connected = connectToWiFi(selected.ssid, password);
         if (connected) {
           result.ssid = selected.ssid;
-          result.password = password;   // 记录用户输入的密码
+          result.password = password;
           u8g2.clearBuffer();
           u8g2.setFont(u8g2_font_wqy12_t_gb2312b);
           u8g2.enableUTF8Print();
