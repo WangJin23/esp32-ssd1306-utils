@@ -9,11 +9,11 @@
 这里以PlatformIO为例，把库直接放入lib文件夹即可
 your_project/
 ├── lib/
-│ └── ssd1306_utils/ # 放入这两个文件
-│   ├─── ssd1306_utils.h
-│   └─── ssd1306_utils.cpp
+│   └── ssd1306_utils/
+│       ├── ssd1306_utils.h
+│       └── ssd1306_utils.cpp
 ├── src/
-│ └── main.cpp
+│   └── main.cpp
 └── platformio.ini
 
 ---
