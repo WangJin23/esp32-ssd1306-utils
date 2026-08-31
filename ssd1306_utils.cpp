@@ -399,7 +399,7 @@ WiFiConfigResult startWiFiConfig() {
           u8g2.sendBuffer();
           delay(2000);
           password = getInputFromUser();
-          if (password == INPUT_CANCEL || password.length() == 0) {
+          if (password.length() == 0) {
             drawWifiList();
             continue;
           }
