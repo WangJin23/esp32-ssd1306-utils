@@ -250,7 +250,7 @@ static void scanWiFi() {
   u8g2.setFont(u8g2_font_wqy12_t_gb2312b);
   u8g2.enableUTF8Print();
   u8g2.setCursor(10, 30);
-  u8g2.print("扫描中...");
+  u8g2.print("加载WiFi列表中...");
   u8g2.sendBuffer();
 
   networks.clear();
@@ -400,6 +400,7 @@ WiFiConfigResult startWiFiConfig() {
           delay(2000);
           password = getInputFromUser();
           if (password.length() == 0) {
+            scanWiFi();
             drawWifiList();
             continue;
           }
