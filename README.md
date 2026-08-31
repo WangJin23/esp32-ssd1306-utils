@@ -1,6 +1,6 @@
 # esp32-ssd1306-utils
 一个ESP32和SSD1306（带有四个按钮）基于**U8g2**的简单实用库，专为 **128x64 SSD1306 OLED屏幕 带四个按键**设计，即装即用，非常简易，包含简易输入法和简易联网功能。
-感谢DeepSeek，贡献了99.9%的代码。
+感谢DeepSeek，贡献了大部分的代码。
 
 ## 安装
 
@@ -29,11 +29,15 @@ your_project/
 | #         | GPIO 19   |
 | *         | GPIO 23   |
 
-> 如果需要修改引脚，可以在ssd1306_utils.h中更改KEY_UP, KEY_DOWN, KEY_HASH, KEY_STAR这些定义
+> 如果需要修改引脚，可以在ssd1306_utils.h中更改SCLK_PIN, SDA_PIN, KEY_UP, KEY_DOWN, KEY_HASH, KEY_STAR这些定义
 
 ## 用法
 
-主要有两个可用函数，其他都是内部函数，调用了可能会出错。
+主要有三个个可用函数。其他都是内部函数，调用了可能会出错(如果需要使用，在ssd1306_utils.h声明即可)。
+
+### `void ssd1306UtilsInit()`
+
+- **功能**：启动屏幕、加载按钮引脚。
 
 ### `String getInputFromUser()`
 
@@ -82,14 +86,8 @@ struct WiFiConfigResult {
 #include <ssd1306_utils.h>
 
 void setup() {
-  // 为调用做设置，否则会报错
   Serial.begin(115200);
-  u8g2.begin();
-  u8g2.enableUTF8Print();
-  pinMode(KEY_UP, INPUT_PULLUP);
-  pinMode(KEY_DOWN, INPUT_PULLUP);
-  pinMode(KEY_HASH, INPUT_PULLUP);
-  pinMode(KEY_STAR, INPUT_PULLUP);
+  ssd1306UtilsInit(); // 把加载屏幕、按钮集成在了这个函数中
   String result_1 = getInputFromUser(); // 这里会阻塞直到输入完成
   Serial.print("用户输入了: ");
   Serial.println(result_1);
@@ -115,8 +113,9 @@ const char* charset[] = {
   "abcdefghijklmnopqrstuvwxyz",
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
   "0123456789!@#$%?&*()-_=+[]",
-  "<>,.|\\/{}`~"
+  "<>,.|\\/{}`~",
+  "0123456789ABCDEF"   // Unicode 输入页，最好不要动这里，因为很可能会出一堆问题
 };
-const char* charsetName[] = { "小写", "大写", "符号", "符号" };
+const char* charsetName[] = { "小写", "大写", "符号", "符号", "Unicode" };
 ```
 charset列表中每个字符串都代表一页，分别对应着charsetName的页面名称。
