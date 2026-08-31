@@ -2,8 +2,6 @@
 一个ESP32和SSD1306（带有四个按钮）基于**U8g2**的简单实用库，专为 **128x64 SSD1306 OLED屏幕 带四个按键**设计，包含简易输入法和简易联网功能。
 感谢DeepSeek，贡献了99.9%的代码。
 
----
-
 ## 安装
 
 这里以PlatformIO为例，把库直接放入lib文件夹即可
@@ -17,8 +15,6 @@ your_project/
 │   └── main.cpp
 └── platformio.ini
 ```
-
----
 
 ## 建议ESP32与屏幕（带有四个按钮）的引脚连接
 
@@ -34,8 +30,6 @@ your_project/
 | *         | GPIO 23   |
 
 > 如果需要修改引脚，可以在ssd1306_utils.h中更改KEY_UP, KEY_DOWN, KEY_HASH, KEY_STAR这些定义
-
----
 
 ## 用法
 
@@ -60,8 +54,6 @@ struct WiFiConfigResult {
 };
 ```
 
----
-
 ## 界面用法
 
 ### 输入法
@@ -80,13 +72,9 @@ struct WiFiConfigResult {
 | #号 | 进入密码输入界面 | / |
 | *号 | 刷新 WiFi 列表 | / |
 
----
-
 ## 需要的外部库
 
 - **U8g2lib.h** 用于显示
-
----
 
 ## 示例代码
 
@@ -119,8 +107,6 @@ void loop() {
 }
 
 ```
-
----
 
 ## 修改字符集
 
