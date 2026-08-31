@@ -13,8 +13,6 @@ extern U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
 #define KEY_HASH  19
 #define KEY_STAR  23
 
-#define INPUT_CANCEL "__CANCEL__"
-
 // 输入法函数声明
 String getInputFromUser();
 
